@@ -240,18 +240,27 @@ def vol_by_days_to_imm(tidy: pd.DataFrame, field: str = "imm_spread_pts",
 # Year-end turn series & spot beta
 # ---------------------------------------------------------------------------
 
-def turn_series(tidy: pd.DataFrame, field: str = "ann_pct",
-                baseline_window: int = 130) -> pd.Series:
-    """Turn extractor: on days when the front pair is Dec-Mar, the level minus
-    a trailing median of NON-turn-quarter levels (the interpolated no-turn
-    baseline). Isolates what the market charges for crossing Dec 31."""
-    df = tidy.sort_values("obs_date").set_index("obs_date")
-    is_turn = df["quarter_pair"] == "Dec-Mar"
-    base = df.loc[~is_turn, field].reindex(df.index).ffill()
-    base_med = base.rolling(baseline_window, min_periods=60).median()
-    ts = (df[field] - base_med)[is_turn]
+def turn_series(all_slots: pd.DataFrame, field: str = "ann_pct") -> pd.Series:
+    """IMM-space turn indicator, SAME-DAY version: on days when the front
+    pair (slot 0) is Dec-Mar, its level minus the SAME DAY's deferred pair
+    (slot 1, Mar-Jun). Both quotes come off the same curve snapshot, so a
+    trending rate environment no longer contaminates the comparison (the
+    flaw in the original trailing-median baseline).
+
+    Remaining known limitation: Dec-Mar and Mar-Jun are different future
+    windows, so genuine curve slope / meeting-calendar differences between
+    the two quarters still land in this measure. For the market-convention
+    extraction that controls for that (forward-forward flanking with a
+    day-count-matched local baseline), use the standalone turn/ module -
+    this IMM-space indicator is kept as a quick same-day richness gauge of
+    the turn-carrying pair, not as the turn estimate."""
+    df = all_slots.sort_values("obs_date")
+    front = df[(df["slot"] == 0) & (df["quarter_pair"] == "Dec-Mar")]
+    deferred = df[df["slot"] == 1].set_index("obs_date")[field]
+    f = front.set_index("obs_date")[field]
+    ts = f - deferred.reindex(f.index)
     ts.name = "turn_premium_ann_pct"
-    return ts
+    return ts.dropna()
 
 
 def spot_beta(tidy: pd.DataFrame, field: str = "imm_spread_pts",

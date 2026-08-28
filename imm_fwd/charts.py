@@ -451,7 +451,8 @@ def plot_turn_series(turns: dict, outfile: str = "turn_series.png"):
         ax.axhline(0, color=INK2, linewidth=0.8)
         ax.set_title(ccy, loc="left", fontweight="bold", color=CCY_COLORS[ccy])
         _style_ax(ax)
-    fig.suptitle("Year-end turn premium by year: Dec-Mar level minus trailing non-turn baseline (ann %)",
+    fig.suptitle("IMM turn gauge by year: Dec-Mar front pair minus SAME-DAY deferred Mar-Jun pair (ann %)\n"
+                 "(quick richness gauge - for the market-convention turn extraction see turn/)",
                  x=0.01, ha="left", fontsize=11, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(outfile, bbox_inches="tight")

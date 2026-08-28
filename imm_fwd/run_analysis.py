@@ -152,7 +152,7 @@ def main(use_bbg: bool = False, outdir: str = "output"):
         print("  {}: all-events share {:.0%} of |move| on {:.0%} of days (intensity {:.2f})".format(
             ccy, es.loc["all_events", "share_of_abs_move"],
             es.loc["all_events", "share_of_days"], es.loc["all_events", "intensity"]))
-    turns = {c: turn_series(df) for c, df in tidy_by_ccy.items()}
+    turns = {c: turn_series(all_slots_by_ccy[c]) for c in tidy_by_ccy}
     for c, ts in turns.items():
         ts.to_csv(os.path.join(outdir, "turn_series_{}.csv".format(c)))
     files.append(charts.plot_turn_series(turns, os.path.join(outdir, "11_turn.png")))

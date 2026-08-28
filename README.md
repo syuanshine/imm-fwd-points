@@ -26,6 +26,7 @@ IDR NDF, INR NDF, PHP NDF, TWD NDF and KRW NDF over a 10-year lookback.
 | `imm_fwd/charts.py` | All charts (matplotlib, small multiples, fixed ccy→color map) |
 | `imm_fwd/events.py` | CB meeting calendar (demo) + event-window move attribution |
 | `imm_fwd/run_analysis.py` | Entry point; `--bbg` switches to the Bloomberg provider |
+| [`turn/`](turn/README.md) | **Standalone year-end turn module** — market-convention extraction (Burghardt–Kirshner/LSEG forward-forward methods), own runner + roadmap |
 | [`style/COLOR_STYLE_GUIDE.md`](style/COLOR_STYLE_GUIDE.md) | The currency color palette (validated colorblind-safe), theme tokens, and rules — **read before building a Streamlit/web dashboard on this data** |
 
 ## === TASK FOR THE DATA-PULLING AGENT ===
@@ -85,8 +86,10 @@ Test the full pipeline first without Bloomberg: `python imm_fwd/run_analysis.py`
    skipped gracefully per currency when unavailable.
 10. **10_vol_by_dtn.png** — stdev of daily point changes bucketed by
     days-to-near-IMM: does the spread get noisier into the roll?
-11. **11_turn.png** — year-end turn premium by year: Dec–Mar level minus a
-    trailing median of non-turn-quarter levels (`turn_series`).
+11. **11_turn.png** — IMM turn gauge by year: Dec–Mar front pair minus the
+    **same-day** deferred Mar–Jun pair (`turn_series`, both legs off one curve
+    snapshot — no trailing-baseline staleness). A quick richness gauge only;
+    the market-convention turn extraction lives in [`turn/`](turn/README.md).
 12. **12_spot_beta.png** — rolling 126d beta of point changes to spot returns
     (points per 1% spot move): hedge-ratio input and flow/stress diagnostic.
 13. **Mean-reversion & tail tables** — `mean_reversion.csv` (AR(1) phi,
