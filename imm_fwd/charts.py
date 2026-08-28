@@ -300,7 +300,9 @@ def plot_ccy_deepdive(df: pd.DataFrame, piv_pts: pd.DataFrame, ret_stats: pd.Dat
         snapshot["z_full"], snapshot["pctile_1y"], snapshot["pctile_full"],
         snapshot["min_full"], snapshot["max_full"], snapshot["median_full"])
     ax6.text(0.0, 0.98, snap_txt, va="top", fontsize=9, family="monospace", color=INK)
-    tbl = ret_stats.round(4)
+    keep = [c for c in ["mean", "std", "q05", "q95", "hit_rate_up",
+                        "worst", "best", "latest"] if c in ret_stats.columns]
+    tbl = ret_stats[keep].round(4)
     table = ax6.table(cellText=tbl.values, rowLabels=tbl.index, colLabels=tbl.columns,
                       loc="center", cellLoc="right", bbox=[0.02, 0.05, 0.96, 0.55])
     table.auto_set_font_size(False)
@@ -368,6 +370,88 @@ def plot_vintage_paths(paths: pd.DataFrame, stats: pd.DataFrame, ccy: str,
                  "(n={} vintages, descriptive only)".format(ccy, quarter, n),
                  x=0.01, ha="left", fontsize=11, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.savefig(outfile, bbox_inches="tight")
+    plt.close(fig)
+    return outfile
+
+
+def plot_fair_value_gap(gaps: dict, outfile: str = "fv_gap.png"):
+    """Small multiples: NDF-IMM-implied differential minus money-market
+    differential (ann %). The residual basis / flow premium a PM can trade."""
+    fig, axes = plt.subplots(3, 2, figsize=(11, 8), sharex=True)
+    for ax, (ccy, gap) in zip(axes.ravel(), gaps.items()):
+        g = gap.dropna()
+        ax.plot(np.asarray(g.index), np.asarray(g.values),
+                color=CCY_COLORS[ccy], linewidth=1.2)
+        ax.axhline(0, color=INK2, linewidth=0.8, alpha=0.5)
+        ax.set_title(ccy, loc="left", fontweight="bold", color=CCY_COLORS[ccy])
+        if len(g):
+            ax.annotate("{:+.2f}".format(g.iloc[-1]), xy=(g.index[-1], g.iloc[-1]),
+                        xytext=(4, 0), textcoords="offset points", fontsize=8,
+                        color=INK, va="center")
+        _style_ax(ax)
+    fig.suptitle("Fair-value gap: IMM-implied minus money-market rate differential (ann %) "
+                 "- the flow/basis premium", x=0.01, ha="left", fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(outfile, bbox_inches="tight")
+    plt.close(fig)
+    return outfile
+
+
+def plot_vol_by_dtn(vols: dict, outfile: str = "vol_by_dtn.png"):
+    """Vol of daily point changes vs days-to-near-IMM, one panel per ccy.
+    Rising bars toward 0 = the spread gets noisier into the roll."""
+    fig, axes = plt.subplots(3, 2, figsize=(11, 8), sharex=True)
+    for ax, (ccy, v) in zip(axes.ravel(), vols.items()):
+        ax.bar(np.asarray(v.index), np.asarray(v.values), width=8,
+               color=CCY_COLORS[ccy], alpha=0.75, edgecolor=SURFACE)
+        ax.invert_xaxis()
+        ax.set_title(ccy, loc="left", fontweight="bold", color=CCY_COLORS[ccy])
+        _style_ax(ax)
+    for ax in axes[-1]:
+        ax.set_xlabel("days to near IMM date (bucket mid)")
+    fig.suptitle("Stdev of daily point changes by days-to-near-IMM (pooled vintages, raw points)",
+                 x=0.01, ha="left", fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(outfile, bbox_inches="tight")
+    plt.close(fig)
+    return outfile
+
+
+def plot_spot_beta(betas: dict, outfile: str = "spot_beta.png"):
+    """Rolling beta of point changes to spot returns, one panel per ccy.
+    Sustained departures from zero flag flow/stress regimes."""
+    fig, axes = plt.subplots(3, 2, figsize=(11, 8), sharex=True)
+    for ax, (ccy, b) in zip(axes.ravel(), betas.items()):
+        s = b.dropna()
+        ax.plot(np.asarray(s.index), np.asarray(s.values),
+                color=CCY_COLORS[ccy], linewidth=1.2)
+        ax.axhline(0, color=INK2, linewidth=0.8, alpha=0.5)
+        ax.set_title(ccy, loc="left", fontweight="bold", color=CCY_COLORS[ccy])
+        _style_ax(ax)
+    fig.suptitle("Rolling 126d beta of daily point changes to spot (points per 1% spot move)",
+                 x=0.01, ha="left", fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(outfile, bbox_inches="tight")
+    plt.close(fig)
+    return outfile
+
+
+def plot_turn_series(turns: dict, outfile: str = "turn_series.png"):
+    """Year-end turn premium per year (mean of the Dec-Mar turn series by
+    the Dec year), one panel per ccy."""
+    fig, axes = plt.subplots(3, 2, figsize=(11, 8), sharex=True)
+    for ax, (ccy, ts) in zip(axes.ravel(), turns.items()):
+        if len(ts.dropna()):
+            yearly = ts.groupby(ts.index.year).mean()
+            ax.bar(np.asarray(yearly.index.astype(int)), np.asarray(yearly.values),
+                   color=CCY_COLORS[ccy], alpha=0.75, edgecolor=SURFACE)
+        ax.axhline(0, color=INK2, linewidth=0.8)
+        ax.set_title(ccy, loc="left", fontweight="bold", color=CCY_COLORS[ccy])
+        _style_ax(ax)
+    fig.suptitle("Year-end turn premium by year: Dec-Mar level minus trailing non-turn baseline (ann %)",
+                 x=0.01, ha="left", fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(outfile, bbox_inches="tight")
     plt.close(fig)
     return outfile

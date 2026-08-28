@@ -18,9 +18,11 @@ from config import UNIVERSE
 from data import BloombergProvider, SyntheticProvider
 from series import (add_derived, build_imm_points_from_curve, per_contract_series,
                     vintage_path_stats, vintage_paths)
-from analytics import (correlation_matrix, horizon_return_stats,
+from analytics import (ar1_half_life, conditional_changes, correlation_matrix,
+                       fair_value_gap, horizon_return_stats, mae_stats, spot_beta,
                        seasonality_by_quarter, single_ccy_snapshot,
-                       summary_table, turn_premium)
+                       summary_table, turn_premium, turn_series, vol_by_days_to_imm)
+from events import demo_calendar, event_share
 import charts
 
 LOOKBACK_YEARS = 10
@@ -109,6 +111,55 @@ def main(use_bbg: bool = False, outdir: str = "output"):
             os.path.join(outdir, "08_vintage_{}.png".format(ccy))))
         print("\n  -- {} {} --".format(ccy, live_quarter))
         print(vstats.round(4).to_string())
+
+    # ---- PM analytics: fair value, mean reversion, tails, events, beta ----
+    # 1) fair-value gap (skipped per-ccy when no rates leg is available)
+    gaps = {}
+    for ccy, df in tidy_by_ccy.items():
+        rd = provider.fetch_rate_diff_history(ccy, start, end)
+        if rd is not None:
+            gaps[ccy] = fair_value_gap(df, rd)
+            gaps[ccy].to_csv(os.path.join(outdir, "fv_gap_{}.csv".format(ccy)))
+    if gaps:
+        files.append(charts.plot_fair_value_gap(gaps, os.path.join(outdir, "09_fv_gap.png")))
+
+    # 2) mean reversion: AR(1) half-life + conditional fade table
+    print("\n=== Mean reversion (ann_pct): AR(1) half-life ===")
+    mr = pd.DataFrame({c: ar1_half_life(df) for c, df in tidy_by_ccy.items()}).T
+    mr.to_csv(os.path.join(outdir, "mean_reversion.csv"))
+    print(mr.round(3).to_string())
+    for ccy, df in tidy_by_ccy.items():
+        conditional_changes(df).to_csv(os.path.join(outdir, "fade_table_{}.csv".format(ccy)))
+    print("\n=== Conditional 21d change by starting z-bucket (KRW example) ===")
+    print(conditional_changes(tidy_by_ccy["KRW"]).round(3).to_string())
+
+    # 3) tails: MAE per vintage + vol vs days-to-IMM
+    for ccy, df in tidy_by_ccy.items():
+        live_quarter = df["quarter_pair"].iloc[-1]
+        paths = vintage_paths(all_slots_by_ccy[ccy], live_quarter,
+                              field="imm_spread_pts", anchor_days=120, mode="change")
+        if not paths.empty:
+            mae_stats(paths).to_csv(os.path.join(outdir, "mae_{}.csv".format(ccy)))
+    vols_dtn = {c: vol_by_days_to_imm(df) for c, df in tidy_by_ccy.items()}
+    files.append(charts.plot_vol_by_dtn(vols_dtn, os.path.join(outdir, "10_vol_by_dtn.png")))
+
+    # 4) event decomposition + turn extractor
+    cal = demo_calendar(start.year, end.year)   # replace with events.load_calendar(csv) in production
+    print("\n=== Event-window share of |move| (demo calendar - replace for production) ===")
+    for ccy, df in tidy_by_ccy.items():
+        es = event_share(df, cal, ccy)
+        es.to_csv(os.path.join(outdir, "event_share_{}.csv".format(ccy)))
+        print("  {}: all-events share {:.0%} of |move| on {:.0%} of days (intensity {:.2f})".format(
+            ccy, es.loc["all_events", "share_of_abs_move"],
+            es.loc["all_events", "share_of_days"], es.loc["all_events", "intensity"]))
+    turns = {c: turn_series(df) for c, df in tidy_by_ccy.items()}
+    for c, ts in turns.items():
+        ts.to_csv(os.path.join(outdir, "turn_series_{}.csv".format(c)))
+    files.append(charts.plot_turn_series(turns, os.path.join(outdir, "11_turn.png")))
+
+    # 5) spot beta
+    betas = {c: spot_beta(df) for c, df in tidy_by_ccy.items()}
+    files.append(charts.plot_spot_beta(betas, os.path.join(outdir, "12_spot_beta.png")))
 
     # per-ccy seasonality tables
     for ccy, df in tidy_by_ccy.items():

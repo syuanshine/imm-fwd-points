@@ -46,6 +46,19 @@ class DataProvider:
         """
         raise NotImplementedError
 
+    def fetch_rate_diff_history(self, ccy: str, start: dt.date, end: dt.date) -> Optional[pd.DataFrame]:
+        """OPTIONAL (enables fair-value analytics): money-market implied
+        local-minus-USD rate differential for the FRONT IMM window, ann %.
+
+        Returns DataFrame indexed by obs_date with column 'rate_diff_ann_pct'.
+        USD leg: SOFR IMM futures cover exactly the same IMM-to-IMM windows -
+            100 - price of the front quarterly SFR contract (SFRU5 etc.).
+        Local leg: cleanest available money-market curve - KRW IRS/CD, INR
+            OIS/MIFOR, THB THOR/IRS, TWD/IDR/PHP interbank or implied yields.
+        Return None if unavailable; fair-value analytics are then skipped.
+        """
+        return None
+
     def fetch_imm_points_history(self, ccy: str, start: dt.date, end: dt.date) -> Optional[pd.DataFrame]:
         """OPTIONAL Route A: directly-quoted IMM points.
 
@@ -75,6 +88,10 @@ class BloombergProvider(DataProvider):
     def fetch_curve_history(self, ccy, start, end):
         raise NotImplementedError("Data agent: implement blpapi pull here.")
 
+    def fetch_rate_diff_history(self, ccy, start, end):
+        # Data agent: optional but high value - see DataProvider docstring.
+        return None
+
 
 class SyntheticProvider(DataProvider):
     """Plausible random-walk curves so the pipeline can be demoed/tested.
@@ -96,19 +113,40 @@ class SyntheticProvider(DataProvider):
 
     def __init__(self, seed: int = 42):
         self.seed = seed
+        self._cache = {}
 
-    def fetch_curve_history(self, ccy, start, end):
+    def _paths(self, ccy, start, end):
+        """Deterministic shared (spot, carry) paths so the points and the
+        'money-market rates' legs are built from the same underlying carry."""
+        key = (ccy, start, end)
+        if key in self._cache:
+            return self._cache[key]
         p = self.PARAMS[ccy]
-        rng = np.random.RandomState(self.seed + hash(ccy) % 1000)
+        rng = np.random.RandomState(self.seed + sum(ord(c) for c in ccy))
         idx = pd.bdate_range(start, end)
         n = len(idx)
-        # spot: random walk
         spot = p[0] * np.exp(np.cumsum(rng.normal(0, 0.004, n)))
-        # annualized carry: OU process
         carry = np.zeros(n)
         carry[0] = p[1]
         for i in range(1, n):
             carry[i] = carry[i-1] + 0.02 * (p[1] - carry[i-1]) + rng.normal(0, p[2] / 16.0)
+        # persistent NDF flow/basis premium on top of 'clean' rates (OU, mean ~30bp)
+        basis = np.zeros(n)
+        basis[0] = 0.3
+        for i in range(1, n):
+            basis[i] = basis[i-1] + 0.01 * (0.3 - basis[i-1]) + rng.normal(0, 0.03)
+        self._cache[key] = (idx, spot, carry, basis)
+        return self._cache[key]
+
+    def fetch_rate_diff_history(self, ccy, start, end):
+        idx, _, carry, basis = self._paths(ccy, start, end)
+        # 'clean' money-market differential = NDF-implied carry minus basis
+        return pd.DataFrame({"rate_diff_ann_pct": carry - basis}, index=idx)
+
+    def fetch_curve_history(self, ccy, start, end):
+        p = self.PARAMS[ccy]
+        idx, spot, carry, _ = self._paths(ccy, start, end)
+        n = len(idx)
         out = pd.DataFrame(index=idx)
         out["spot"] = spot
         year_frac_turn = 10.0 / 360.0  # ~10-day turn window

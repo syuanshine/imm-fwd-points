@@ -75,7 +75,27 @@ Test the full pipeline first without Bloomberg: `python imm_fwd/run_analysis.py`
    days-to-near-IMM and expressed as *cumulative change in raw points from the
    T-120 anchor*, plus the cross-vintage median and 25–75% band. Backing CSVs:
    `vintage_paths_*.csv`, `vintage_stats_*.csv` (checkpoints at T-90/60/30/10/0).
-9. **summary.csv / seasonality_*.csv / correlations.csv** — the tables behind them.
+9. **09_fv_gap.png** — **fair-value gap**: IMM-implied differential minus the
+   money-market rate differential over the same window. The residual is the
+   basis / flow premium — the tradeable component not explained by policy
+   paths. Requires the optional `fetch_rate_diff_history` (USD leg: SOFR IMM
+   futures cover the exact same windows; local leg: best available IRS/OIS);
+   skipped gracefully per currency when unavailable.
+10. **10_vol_by_dtn.png** — stdev of daily point changes bucketed by
+    days-to-near-IMM: does the spread get noisier into the roll?
+11. **11_turn.png** — year-end turn premium by year: Dec–Mar level minus a
+    trailing median of non-turn-quarter levels (`turn_series`).
+12. **12_spot_beta.png** — rolling 126d beta of point changes to spot returns
+    (points per 1% spot move): hedge-ratio input and flow/stress diagnostic.
+13. **Mean-reversion & tail tables** — `mean_reversion.csv` (AR(1) phi,
+    half-life, t-stat per currency), `fade_table_*.csv` (distribution of next
+    21d change conditional on the starting z-bucket — the licence, or not, for
+    fading extremes), `mae_*.csv` (max adverse excursion along each vintage's
+    T-120→T-0 path, long and short side — what a stop-loss has to survive),
+    and `event_share_*.csv` (share of |move| in CB-meeting windows vs quiet
+    days; **bundled calendar is a demo approximation** — production should
+    load a real ECO calendar via `events.load_calendar(csv)`).
+14. **summary.csv / seasonality_*.csv / correlations.csv** — the tables behind them.
 
 ### Why cumulative change, not percentage returns
 

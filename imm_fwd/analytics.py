@@ -105,12 +105,17 @@ def horizon_return_stats(tidy: pd.DataFrame, field: str = "imm_spread_pts",
         if len(c) < 20:
             rows[label] = {k: np.nan for k in
                            ["mean", "std", "skew", "kurt", "hit_rate_up",
+                            "q05", "q25", "q75", "q95", "es95_down", "es95_up",
                             "worst", "best", "latest"]}
             continue
         rows[label] = {
             "mean": c.mean(), "std": c.std(),
             "skew": c.skew(), "kurt": c.kurt(),
             "hit_rate_up": (c > 0).mean(),
+            "q05": c.quantile(0.05), "q25": c.quantile(0.25),
+            "q75": c.quantile(0.75), "q95": c.quantile(0.95),
+            "es95_down": c[c <= c.quantile(0.05)].mean(),
+            "es95_up": c[c >= c.quantile(0.95)].mean(),
             "worst": c.min(), "best": c.max(),
             "latest": chg.iloc[-1],
         }
@@ -130,3 +135,138 @@ def single_ccy_snapshot(tidy: pd.DataFrame, field: str = "imm_spread_pts") -> pd
         "pctile_1y": p.get("1y"), "pctile_full": p.get("full"),
         "min_full": s.min(), "median_full": s.median(), "max_full": s.max(),
     })
+
+
+# ---------------------------------------------------------------------------
+# Fair value vs money-market rates
+# ---------------------------------------------------------------------------
+
+def fair_value_gap(tidy: pd.DataFrame, rate_diff: pd.DataFrame) -> pd.Series:
+    """NDF-IMM-implied differential minus the money-market differential over
+    the same window, ann %. What's left after rates is basis / flow premium /
+    intervention expectation - the component a PM can actually fade or own,
+    since it is NOT explained by the local-vs-USD policy path."""
+    s = tidy.set_index("obs_date")["ann_pct"]
+    r = rate_diff["rate_diff_ann_pct"].reindex(s.index).ffill()
+    gap = s - r
+    gap.name = "fv_gap_ann_pct"
+    return gap
+
+
+# ---------------------------------------------------------------------------
+# Mean reversion
+# ---------------------------------------------------------------------------
+
+def ar1_half_life(tidy: pd.DataFrame, field: str = "ann_pct") -> pd.Series:
+    """AR(1) evidence for the rolling front series: regress within-pair daily
+    change on the lagged level. Returns phi (AR coefficient), half-life in
+    business days, and the t-stat of the mean-reversion slope.
+    A short half-life with a decent |t| is the statistical licence for fading
+    extremes; phi ~ 1 (half-life -> inf) says extremes drift, don't fade."""
+    df = tidy.sort_values("obs_date")
+    lag = df.groupby("pair")[field].shift(1)
+    chg = df[field] - lag
+    m = pd.DataFrame({"chg": chg, "lag": lag}).dropna()
+    x = m["lag"] - m["lag"].mean()
+    b = (x * m["chg"]).sum() / (x ** 2).sum()
+    resid = m["chg"] - b * x - m["chg"].mean()
+    se = np.sqrt((resid ** 2).sum() / (len(m) - 2) / (x ** 2).sum())
+    phi = 1.0 + b
+    hl = np.log(2) / -np.log(phi) if 0 < phi < 1 else np.inf
+    return pd.Series({"phi": phi, "half_life_bd": hl, "t_stat": b / se, "n": len(m)})
+
+
+def conditional_changes(tidy: pd.DataFrame, field: str = "ann_pct",
+                        horizon: int = 21, z_window: int = 504) -> pd.DataFrame:
+    """Fade table: bucket each day by the level's trailing z-score, then look
+    at the distribution of the NEXT `horizon`-day within-pair change.
+    If the bottom bucket shows positive median forward change (and top bucket
+    negative), extremes have historically reverted at that horizon."""
+    df = tidy.sort_values("obs_date").reset_index(drop=True)
+    s = df[field]
+    mu = s.rolling(z_window, min_periods=250).mean()
+    sd = s.rolling(z_window, min_periods=250).std()
+    z = (s - mu) / sd
+    fwd = df.groupby("pair")[field].shift(-horizon) - s
+    m = pd.DataFrame({"z": z, "fwd": fwd}).dropna()
+    edges = [-np.inf, -1.5, -0.5, 0.5, 1.5, np.inf]
+    labels = ["z<-1.5", "-1.5..-0.5", "-0.5..0.5", "0.5..1.5", "z>1.5"]
+    m["bucket"] = pd.cut(m["z"], edges, labels=labels)
+    g = m.groupby("bucket")["fwd"]
+    out = pd.DataFrame({
+        "n": g.count(), "median": g.median(), "mean": g.mean(),
+        "q05": g.quantile(0.05), "q95": g.quantile(0.95),
+        "hit_rate_up": g.apply(lambda x: (x > 0).mean()),
+    })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Range-of-changes / tail upgrades
+# ---------------------------------------------------------------------------
+
+def mae_stats(paths: pd.DataFrame) -> pd.DataFrame:
+    """Max adverse excursion per vintage from a vintage_paths(mode='change')
+    frame: the worst mark-to-market dip along the T-anchor -> T-0 path, for a
+    long-points and a short-points holder, plus the endpoint. The gap between
+    MAE and the final change is what a stop-loss has to survive."""
+    rows = {}
+    for c in paths.columns:
+        s = paths[c].dropna()
+        if len(s) < 10:
+            continue
+        rows[c] = {"final_change": s.iloc[-1],
+                   "long_MAE": s.min(), "short_MAE": -s.max()}
+    df = pd.DataFrame(rows).T
+    df.loc["MEDIAN"] = df.median()
+    df.loc["WORST"] = [df["final_change"].min(), df["long_MAE"].min(), df["short_MAE"].min()]
+    return df
+
+
+def vol_by_days_to_imm(tidy: pd.DataFrame, field: str = "imm_spread_pts",
+                       bucket: int = 10) -> pd.Series:
+    """Stdev of within-pair daily changes bucketed by days-to-near-IMM,
+    pooled across all vintages. Answers: does the spread get noisier as the
+    roll approaches (hold through vs exit early)?"""
+    df = tidy.sort_values("obs_date")
+    chg = df.groupby("pair")[field].diff()
+    b = (df["days_to_near"] // bucket) * bucket + bucket // 2
+    out = chg.groupby(b).std()
+    out.index.name = "days_to_near_mid"
+    return out.sort_index()
+
+
+# ---------------------------------------------------------------------------
+# Year-end turn series & spot beta
+# ---------------------------------------------------------------------------
+
+def turn_series(tidy: pd.DataFrame, field: str = "ann_pct",
+                baseline_window: int = 130) -> pd.Series:
+    """Turn extractor: on days when the front pair is Dec-Mar, the level minus
+    a trailing median of NON-turn-quarter levels (the interpolated no-turn
+    baseline). Isolates what the market charges for crossing Dec 31."""
+    df = tidy.sort_values("obs_date").set_index("obs_date")
+    is_turn = df["quarter_pair"] == "Dec-Mar"
+    base = df.loc[~is_turn, field].reindex(df.index).ffill()
+    base_med = base.rolling(baseline_window, min_periods=60).median()
+    ts = (df[field] - base_med)[is_turn]
+    ts.name = "turn_premium_ann_pct"
+    return ts
+
+
+def spot_beta(tidy: pd.DataFrame, field: str = "imm_spread_pts",
+              window: int = 126) -> pd.Series:
+    """Rolling beta of daily point changes to spot %-returns (points per 1%
+    spot move). Non-zero beta = points are trading directionally with USD
+    (flow/stress regime) rather than as a pure rates instrument; it is also
+    the PM's hedge-ratio input for a points position."""
+    df = tidy.sort_values("obs_date")
+    chg = df.groupby("pair")[field].diff()
+    ret = df["spot"].pct_change() * 100.0
+    m = pd.DataFrame({"chg": chg, "ret": ret})
+    m.index = df["obs_date"]
+    cov = m["chg"].rolling(window, min_periods=int(window * 0.7)).cov(m["ret"])
+    var = m["ret"].rolling(window, min_periods=int(window * 0.7)).var()
+    beta = cov / var
+    beta.name = "beta_pts_per_1pct_spot"
+    return beta
