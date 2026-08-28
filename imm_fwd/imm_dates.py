@@ -52,6 +52,18 @@ def front_pair(d: date) -> Tuple[date, date]:
     return near, far
 
 
+def pair_at_slot(d: date, slot: int = 0) -> Tuple[date, date]:
+    """(near, far) legs of the `slot`-th IMM pair seen from date d.
+
+    slot=0 is the front pair (the one that rolls each IMM date); slot=1 is
+    the deferred pair, i.e. the SAME calendar spread one quarter before it
+    becomes front. Tracking slot>=1 is what lets a vintage be followed for
+    more than ~91 days of life (see series.vintage_paths).
+    """
+    legs = next_imm_dates(d, slot + 2)
+    return legs[slot], legs[slot + 1]
+
+
 def pair_label(near: date, style: str = "long") -> str:
     """Label a pair by its near leg. 'Sep25-Dec25' (long) or 'U5Z5' (code)."""
     far = next_imm_dates(near - timedelta(days=1), 2)[1]

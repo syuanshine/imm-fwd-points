@@ -70,7 +70,28 @@ Test the full pipeline first without Bloomberg: `python imm_fwd/run_analysis.py`
    (1d/5d/21d/63d: mean, std, skew, kurtosis, hit rate, worst/best, latest).
    Changes are computed within each named pair only, so roll jumps never
    contaminate the stats. Backing CSVs: `return_stats_*.csv`, `snapshot_*.csv`.
-8. **summary.csv / seasonality_*.csv / correlations.csv** — the tables behind them.
+8. **08_vintage_<CCY>.png** — **vintage-path seasonality**: every Sep–Dec (or
+   current quarter) vintage's path over its final 120 days, aligned on
+   days-to-near-IMM and expressed as *cumulative change in raw points from the
+   T-120 anchor*, plus the cross-vintage median and 25–75% band. Backing CSVs:
+   `vintage_paths_*.csv`, `vintage_stats_*.csv` (checkpoints at T-90/60/30/10/0).
+9. **summary.csv / seasonality_*.csv / correlations.csv** — the tables behind them.
+
+### Why cumulative change, not percentage returns
+
+Forward points are a **spread, not a price**: they sit near zero and change
+sign (KRW and TWD IMM points do exactly this). `P_t/P_0 − 1` therefore explodes
+when the anchor is small and flips sign when the path crosses zero, so a
+"−200% return" can mean a move from −0.1 to +0.1. `vintage_paths(...)` defaults
+to `mode="change"` (cumulative change in points) and offers `mode="z"` /
+`"common_z"` for vol-normalized comparison. `mode="pct"` exists but warns.
+
+### Tracking a vintage beyond ~91 days
+
+A vintage is only the *front* pair for ~91 days (the gap between IMM dates), so
+T-120 analysis requires pricing the **deferred** pair too. `build_imm_points_from_curve`
+takes `slots=(0, 1)`; `vintage_paths` splices the two so each contract is followed
+for its full 120-day run-up. All front-pair analytics still filter `slot == 0`.
 
 Natural extensions once live data is in: spread-vs-outright regression (beta of
 IMM points to spot moves), event studies around central-bank dates, and a

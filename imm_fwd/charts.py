@@ -315,3 +315,59 @@ def plot_ccy_deepdive(df: pd.DataFrame, piv_pts: pd.DataFrame, ret_stats: pd.Dat
     fig.savefig(outfile, bbox_inches="tight")
     plt.close(fig)
     return outfile
+
+
+def plot_vintage_paths(paths: pd.DataFrame, stats: pd.DataFrame, ccy: str,
+                       quarter: str, outfile: str, mode: str = "change",
+                       units: str = "points"):
+    """Seasonality view: every vintage's path from T-anchor to the near IMM
+    date, aligned on days-to-IMM, plus the cross-vintage median/IQR band.
+
+    Left: individual vintage paths (ordinal ramp, oldest light -> newest dark),
+          current vintage highlighted in the currency colour.
+    Right: median path with the 25-75% band across vintages - the actual
+          'is there a seasonal drift?' answer, with dispersion visible.
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4.8), sharey=True)
+    ramp = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7",
+            "#3987e5", "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281"]
+    cols = list(paths.columns)
+    steps = [ramp[int(round(i * (len(ramp) - 1) / max(len(cols) - 1, 1)))]
+             for i in range(len(cols))]
+    for c, colr in zip(cols[:-1], steps[:-1]):
+        s = paths[c].dropna()
+        ax1.plot(np.asarray(s.index), np.asarray(s.values), color=colr, linewidth=1.2)
+    if cols:
+        s = paths[cols[-1]].dropna()
+        ax1.plot(np.asarray(s.index), np.asarray(s.values), color=CCY_COLORS[ccy],
+                 linewidth=2.2, label=cols[-1] + " (current)")
+        ax1.legend(fontsize=8, frameon=False, loc="best")
+    ax1.axhline(0, color=INK2, linewidth=0.9)
+    ax1.invert_xaxis()
+    ax1.set_xlabel("days to near IMM date")
+    ax1.set_ylabel("cumulative change from anchor ({})".format(units))
+    ax1.set_title("Vintage paths ({} vintages)".format(len(cols)),
+                  loc="left", fontweight="bold")
+    _style_ax(ax1)
+
+    med = paths.median(axis=1)
+    q25, q75 = paths.quantile(0.25, axis=1), paths.quantile(0.75, axis=1)
+    ax2.fill_between(np.asarray(med.index), np.asarray(q25), np.asarray(q75),
+                     color=CCY_COLORS[ccy], alpha=0.22, label="25-75% across vintages")
+    ax2.plot(np.asarray(med.index), np.asarray(med.values), color=CCY_COLORS[ccy],
+             linewidth=2.0, label="median path")
+    ax2.axhline(0, color=INK2, linewidth=0.9)
+    ax2.invert_xaxis()
+    ax2.set_xlabel("days to near IMM date")
+    ax2.set_title("Median path & dispersion", loc="left", fontweight="bold")
+    ax2.legend(fontsize=8, frameon=False)
+    _style_ax(ax2)
+
+    n = int(stats["n"].max()) if len(stats) and not stats["n"].isna().all() else 0
+    fig.suptitle("{} - {} IMM points: seasonality of the run-up to the near IMM date "
+                 "(n={} vintages, descriptive only)".format(ccy, quarter, n),
+                 x=0.01, ha="left", fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.savefig(outfile, bbox_inches="tight")
+    plt.close(fig)
+    return outfile

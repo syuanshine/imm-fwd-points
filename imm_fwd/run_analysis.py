@@ -16,7 +16,8 @@ import pandas as pd
 
 from config import UNIVERSE
 from data import BloombergProvider, SyntheticProvider
-from series import add_derived, build_imm_points_from_curve, per_contract_series
+from series import (add_derived, build_imm_points_from_curve, per_contract_series,
+                    vintage_path_stats, vintage_paths)
 from analytics import (correlation_matrix, horizon_return_stats,
                        seasonality_by_quarter, single_ccy_snapshot,
                        summary_table, turn_premium)
@@ -33,14 +34,20 @@ def main(use_bbg: bool = False, outdir: str = "output"):
 
     # ---- build tidy IMM frames per currency -------------------------------
     tidy_by_ccy = {}
+    all_slots_by_ccy = {}
     for cfg in UNIVERSE:
         direct = provider.fetch_imm_points_history(cfg.code, start, end)
         if direct is not None:                     # Route A: direct IMM tickers
             tidy = direct.assign(ccy=cfg.code)
         else:                                      # Route B: interpolate curve
             curve = provider.fetch_curve_history(cfg.code, start, end)
-            tidy = build_imm_points_from_curve(curve, cfg.code)
-        tidy_by_ccy[cfg.code] = add_derived(tidy)
+            # slots=(0,1): front pair for the rolling series, deferred pair so
+            # each vintage can be tracked back beyond ~91 days (T-120 analysis)
+            tidy = build_imm_points_from_curve(curve, cfg.code, slots=(0, 1))
+        full = add_derived(tidy)
+        all_slots_by_ccy[cfg.code] = full
+        # every legacy analytic uses the FRONT pair only
+        tidy_by_ccy[cfg.code] = full[full["slot"] == 0].reset_index(drop=True)
         tidy_by_ccy[cfg.code].to_csv(os.path.join(outdir, "imm_tidy_{}.csv".format(cfg.code)), index=False)
 
     # ---- analytics --------------------------------------------------------
@@ -85,6 +92,23 @@ def main(use_bbg: bool = False, outdir: str = "output"):
         snap.to_csv(os.path.join(outdir, "snapshot_{}.csv".format(ccy)))
         print("\n  -- {} ({}) --".format(ccy, snap["pair"]))
         print(ret_stats.round(4).to_string())
+
+    # ---- vintage-path seasonality (T-120 -> IMM date, per currency) -------
+    print("\n=== Vintage-path seasonality: cumulative change from T-120 (raw points) ===")
+    for ccy, df in tidy_by_ccy.items():
+        live_quarter = df["quarter_pair"].iloc[-1]
+        paths = vintage_paths(all_slots_by_ccy[ccy], live_quarter,
+                              field="imm_spread_pts", anchor_days=120, mode="change")
+        if paths.empty:
+            continue
+        vstats = vintage_path_stats(paths)
+        vstats.to_csv(os.path.join(outdir, "vintage_stats_{}.csv".format(ccy)))
+        paths.to_csv(os.path.join(outdir, "vintage_paths_{}.csv".format(ccy)))
+        files.append(charts.plot_vintage_paths(
+            paths, vstats, ccy, live_quarter,
+            os.path.join(outdir, "08_vintage_{}.png".format(ccy))))
+        print("\n  -- {} {} --".format(ccy, live_quarter))
+        print(vstats.round(4).to_string())
 
     # per-ccy seasonality tables
     for ccy, df in tidy_by_ccy.items():
