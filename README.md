@@ -24,7 +24,9 @@ IDR NDF, INR NDF, PHP NDF, TWD NDF and KRW NDF over a 10-year lookback.
 | `imm_fwd/series.py` | Curve→IMM interpolation, rolling front series, roll-adjusted changes, per-contract alignment |
 | `imm_fwd/analytics.py` | Z-scores, percentiles, seasonality, year-end turn premium, correlations, realized vol |
 | `imm_fwd/charts.py` | All charts (matplotlib, small multiples, fixed ccy→color map) |
+| `imm_fwd/events.py` | CB meeting calendar (demo) + event-window move attribution |
 | `imm_fwd/run_analysis.py` | Entry point; `--bbg` switches to the Bloomberg provider |
+| [`style/COLOR_STYLE_GUIDE.md`](style/COLOR_STYLE_GUIDE.md) | The currency color palette (validated colorblind-safe), theme tokens, and rules — **read before building a Streamlit/web dashboard on this data** |
 
 ## === TASK FOR THE DATA-PULLING AGENT ===
 

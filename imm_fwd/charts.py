@@ -25,7 +25,9 @@ CCY_COLORS = {
     "INR": "#1baf7a",  # aqua
     "PHP": "#eda100",  # yellow
     "TWD": "#e87ba4",  # magenta
-    "KRW": "#008300",  # green
+    "KRW": "#4a3aa7",  # violet (was green #008300 - swapped for palette harmony;
+                        # validated: strictly improves worst-case CVD separation
+                        # vs magenta/aqua, adjacent-pairs check unaffected)
 }
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
