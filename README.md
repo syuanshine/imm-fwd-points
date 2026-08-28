@@ -1,0 +1,89 @@
+# Asian NDF IMM Forward-Points Analyzer
+
+Analyzes the evolution of **IMM-period forward points** for THB (offshore),
+IDR NDF, INR NDF, PHP NDF, TWD NDF and KRW NDF over a 10-year lookback.
+
+## Definitions
+
+* **IMM dates**: 3rd Wednesday of Mar / Jun / Sep / Dec (CME convention).
+* **IMM forward points** on observation date *t*: the calendar spread between
+  the two nearest IMM dates after *t* — near leg = 1st IMM date, far leg = 2nd.
+  E.g. "Sep–Dec IMM" between the Jun and Sep IMM dates. The pair **rolls on
+  each IMM date** (Sep–Dec → Dec–Mar on the Sep IMM date).
+* **Normalization**: raw points are not comparable across currencies, so
+  analytics run on the annualized CIP-implied local-minus-USD yield gap:
+  `ann_pct = ((S + far_pts)/(S + near_pts) − 1) × 360/days × 100` (ACT/360).
+
+## Module layout
+
+| File | Purpose |
+|---|---|
+| `imm_fwd/imm_dates.py` | IMM calendar: 3rd-Wed generator, front pair for any date, labels |
+| `imm_fwd/config.py` | Currency universe, NDF ticker roots, points scales (**verify on terminal**) |
+| `imm_fwd/data.py` | `DataProvider` interface, `BloombergProvider` **stub to implement**, `SyntheticProvider` demo |
+| `imm_fwd/series.py` | Curve→IMM interpolation, rolling front series, roll-adjusted changes, per-contract alignment |
+| `imm_fwd/analytics.py` | Z-scores, percentiles, seasonality, year-end turn premium, correlations, realized vol |
+| `imm_fwd/charts.py` | All charts (matplotlib, small multiples, fixed ccy→color map) |
+| `imm_fwd/run_analysis.py` | Entry point; `--bbg` switches to the Bloomberg provider |
+
+## === TASK FOR THE DATA-PULLING AGENT ===
+
+Implement **one method**: `BloombergProvider.fetch_curve_history(ccy, start, end)`
+in `imm_fwd/data.py`. Return a DataFrame indexed by business date with columns
+`spot`, `<tenor>_pts`, and optionally `<tenor>_days` for the tenors in
+`config.CURVE_TENORS`. Points must be in **quote units** (outright = spot + pts),
+i.e. raw Bloomberg points divided by the verified `FWD_SCALE`.
+
+Guidance (verify all tickers via ALLQ/FRD on your terminal):
+* Spot: `USDKRW Curncy` etc. (`config.CcyConfig.spot_ticker`)
+* NDF points: typically `<root>+<tenor> Curncy` — KWN (KRW), NTN (TWD),
+  IRN (INR), IHN (IDR), PPN (PHP), THB offshore forwards for THB.
+* Fields: `PX_LAST` daily history; confirm scaling via `FWD_SCALE` / DES.
+* Prefer pulling actual settlement dates per tenor (populate `<tenor>_days`);
+  otherwise the `TENOR_DAYS` approximation is used.
+* Optional Route A: if your source contributes IMM-dated points directly,
+  implement `fetch_imm_points_history` instead and interpolation is skipped.
+
+Everything downstream (series construction, analytics, charts) then runs via:
+
+    python imm_fwd/run_analysis.py --bbg
+
+Test the full pipeline first without Bloomberg: `python imm_fwd/run_analysis.py`
+(synthetic data; charts land in `output/`).
+
+## Analytics & charts produced
+
+1. **01_rolling_imm.png** — 10y continuous front IMM–IMM series per currency
+   (annualized %), small multiples: the core "evolution" view.
+2. **02_seasonality.png** — distribution by quarter-pair (Mar–Jun … Dec–Mar);
+   Dec–Mar embeds the **year-end funding turn** (classically TWD/KRW).
+3. **03_zscores.png** — latest level vs 1y/3y/full history: rich/cheap monitor.
+4. **04_corr.png** — cross-currency correlation of weekly roll-adjusted changes.
+5. **05_vol.png** — rolling 3m realized vol of the spread (regime detection).
+6. **06_evolution_<CCY>.png** — each Sep–Dec (front-quarter) vintage overlaid on
+   a days-to-near-IMM axis vs the 10–90% envelope of prior contracts: shows how
+   the current pair trades vs history at the same point in its life.
+7. **07_deepdive_<CCY>.png** — per-currency one-pager in **raw points** (no
+   annualization) for idiosyncratic analysis: 10y raw spread, seasonality,
+   rolling vol of daily changes, 21d-change distribution, current vintage vs
+   prior-contract envelope, and a snapshot + change-stats table by horizon
+   (1d/5d/21d/63d: mean, std, skew, kurtosis, hit rate, worst/best, latest).
+   Changes are computed within each named pair only, so roll jumps never
+   contaminate the stats. Backing CSVs: `return_stats_*.csv`, `snapshot_*.csv`.
+8. **summary.csv / seasonality_*.csv / correlations.csv** — the tables behind them.
+
+Natural extensions once live data is in: spread-vs-outright regression (beta of
+IMM points to spot moves), event studies around central-bank dates, and a
+cross-currency RV monitor (pairwise ann_pct differentials with z-scores).
+
+## Caveats
+
+* Linear interpolation of points between curve tenors is the standard first
+  approximation, but it **smears the year-end turn** across Dec-spanning
+  tenors; for precise Dec-pair work prefer direct IMM/turn quotes (Route A).
+* NDF fixings (KRW KFTC18, TWD TAIFX1, INR RBI/FBIL, IDR JISDOR, PHP BAP) fix
+  ~2 business days before value; we treat the IMM date as the leg value date.
+* THB is offshore/deliverable-restricted rather than a pure NDF — onshore vs
+  offshore basis can distort comparisons in stress periods (e.g. BOT measures).
+* Bloomberg NDF points history >10y can be patchy for PHP/IDR — check for
+  stale prints (repeated values) before trusting vol/correlation numbers.
